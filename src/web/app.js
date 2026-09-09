@@ -292,6 +292,7 @@ function viewDashboard() {
           <dt>SillyTavern</dt><dd>${esc(s.setup.dataDir || '—')}</dd>
           <dt>Layout</dt><dd>${esc(s.setup.layout || '—')} ${s.setup.layout === 'public' ? '<span class="pill warn">legacy</span>' : ''}</dd>
           <dt>Persistent</dt><dd>${s.platform.durability.durable ? '<span class="pill ok">yes</span>' : '<span class="pill bad">no</span>'}</dd>
+          ${s.platform.disk && s.platform.disk.ok ? `<dt>Free space</dt><dd>${fmtBytes(s.platform.disk.free)} of ${fmtBytes(s.platform.disk.total)}</dd>` : ''}
         </dl>
       </div>
       <div class="card">
@@ -1034,6 +1035,16 @@ function confirmRestore(name, from, info) {
       <dt>API keys</dt><dd>${info.hasSecrets ? 'included (secrets.json)' : 'not included'}</dd>
       <dt>Top level</dt><dd style="font-size:11.5px">${esc((info.topLevel || []).slice(0, 12).join(', '))}</dd>
     </dl>` : ''}
+    ${(() => {
+      const disk = State.status && State.status.platform.disk;
+      const need = info ? info.rawBytes : 0;
+      if (!disk || !disk.ok || !need) return '';
+      return need > disk.free
+        ? `<div class="notice bad"><b>Not enough room.</b> This archive expands to ${fmtBytes(need)}
+           but only ${fmtBytes(disk.free)} is free. Delete some backups first, or restore the
+           chats-only profile.</div>`
+        : `<div class="notice info">Expands to ${fmtBytes(need)}; ${fmtBytes(disk.free)} free.</div>`;
+    })()}
     <div class="notice warn">A safety copy of your current data is taken first, so this is reversible.</div>
     <label class="switch"><input type="checkbox" id="wipeFirst"><span class="track"></span>
       <span class="txt"><b>Delete existing data first</b>

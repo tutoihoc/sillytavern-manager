@@ -124,10 +124,34 @@ paths.label = {
   modelscope: 'ModelScope Studio',
 }[kind] || kind;
 
+/**
+ * Free space where we store things.
+ *
+ * Restoring a big export needs room for the uploaded archive AND its contents:
+ * the real 2.36 GB sample expands to 3.8 GB. On a free Studio that is a
+ * meaningful fraction of the quota, so the UI shows this and warns before a
+ * restore rather than failing halfway through writing files.
+ */
+async function diskSpace(dir = home) {
+  try {
+    // Before first run the directory may not exist yet; ask about its parent.
+    let target = dir;
+    while (target && !fs.existsSync(target) && path.dirname(target) !== target) {
+      target = path.dirname(target);
+    }
+    const st = await fs.promises.statfs(target);
+    const free = st.bavail * st.bsize;
+    const total = st.blocks * st.bsize;
+    return { free, total, used: total - free, ok: true };
+  } catch (err) {
+    return { ok: false, reason: err.message };   // statfs needs Node 18.15+
+  }
+}
+
 function ensureDirs() {
   for (const d of [paths.home, paths.stateDir, paths.backupDir, paths.logDir, paths.binDir, paths.tmpDir]) {
     fs.mkdirSync(d, { recursive: true });
   }
 }
 
-module.exports = { ...paths, ensureDirs, detect, resolveHome, inContainer };
+module.exports = { ...paths, ensureDirs, diskSpace, detect, resolveHome, inContainer };

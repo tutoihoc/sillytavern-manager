@@ -79,6 +79,7 @@ async function createApp({ port = Number(process.env.PORT) || 7860 } = {}) {
     async status() {
       const layout = store.get('sillytavern.layout') || ST.detectLayout(platform.stRoot);
       const dataDir = getDataDir();
+      const disk = await platform.diskSpace().catch(() => ({ ok: false }));
       return {
         version: VERSION,
         platform: {
@@ -87,6 +88,7 @@ async function createApp({ port = Number(process.env.PORT) || 7860 } = {}) {
           container: platform.container,
           home: platform.home,
           durability: platform.durability,
+          disk,
         },
         setup: {
           installed: app.installed(),
