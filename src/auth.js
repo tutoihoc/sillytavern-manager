@@ -32,9 +32,33 @@ function verifyPassword(password, hash, salt) {
   return candidate.length === expected.length && crypto.timingSafeEqual(candidate, expected);
 }
 
+/**
+ * Headers that only appear when something forwarded this request on behalf of
+ * a remote client. cloudflared adds its own; so do nginx, Caddy and the
+ * ModelScope gateway.
+ */
+const FORWARDED_HEADERS = [
+  'x-forwarded-for', 'x-real-ip', 'forwarded',
+  'cf-connecting-ip', 'cf-ray', 'cf-ipcountry',
+  'x-forwarded-host', 'x-forwarded-proto',
+];
+
+/**
+ * Did this request genuinely originate on this machine?
+ *
+ * The socket address alone is not enough and trusting it is a real hole: with a
+ * Cloudflare tunnel in front, every request in the world arrives from
+ * 127.0.0.1, because cloudflared connects to us over loopback. A request is
+ * only local if the peer is loopback AND nothing forwarded it.
+ */
 function isLoopback(req) {
   const addr = req.socket.remoteAddress || '';
-  return addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  const peerIsLocal = addr === '127.0.0.1' || addr === '::1' || addr === '::ffff:127.0.0.1';
+  if (!peerIsLocal) return false;
+  for (const h of FORWARDED_HEADERS) {
+    if (req.headers[h] !== undefined) return false;
+  }
+  return true;
 }
 
 class Auth {
@@ -44,6 +68,24 @@ class Auth {
     this.sessions = new Map();   // token -> expiry
     // Regenerated every start: a code from a previous boot is worthless.
     this.setupCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+  }
+
+  /**
+   * Clear the password once when STM_RESET_PASSWORD is set to a new value.
+   * Hosts like ModelScope give the owner no shell, so `stm reset-password` is
+   * unreachable there. Recording the token means leaving the variable in place
+   * does not wipe the password on every restart.
+   */
+  maybeReset() {
+    const token = process.env.STM_RESET_PASSWORD;
+    if (!token) return false;
+    if (this.store.get('passwordResetToken') === token) return false;
+    this.store.set('passwordResetToken', token);
+    this.store.set('adminPasswordHash', null);
+    this.store.set('adminPasswordSalt', null);
+    this.sessions.clear();
+    if (this.log) this.log.warn('STM_RESET_PASSWORD was set: the panel password has been cleared.');
+    return true;
   }
 
   /** Shout the setup code until a password is set. */

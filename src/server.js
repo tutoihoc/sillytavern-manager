@@ -183,6 +183,7 @@ async function start({ port = Number(process.env.PORT) || 7860, host = '0.0.0.0'
   });
 
   app.log.info(`Control panel: http://localhost:${port}${PANEL}`);
+  auth.maybeReset();
   auth.announceSetup();
 
   await app.begin();

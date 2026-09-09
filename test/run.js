@@ -19,6 +19,7 @@ const ST = require('../src/core/sillytavern');
 const archive = require('../src/core/archive');
 const { S3Client } = require('../src/core/s3');
 const { Store } = require('../src/core/store');
+const { Auth, isLoopback } = require('../src/auth');
 
 let passed = 0;
 let failed = 0;
@@ -188,6 +189,35 @@ async function test(name, fn) {
     const signed = c.sign({ method: 'PUT', key: 'sillytavern/stm full.zip', now: new Date('2026-09-09T05:45:00Z') });
     assert.ok(signed.canonicalRequest.includes('/b/sillytavern/stm%20full.zip'));
     assert.ok(signed.headers.authorization.startsWith('AWS4-HMAC-SHA256 Credential=AK/20260909/auto/s3/'));
+  });
+
+  console.log('\nfirst-run ownership');
+
+  const fakeReq = (addr, headers = {}) => ({ socket: { remoteAddress: addr }, headers });
+
+  await test('a genuinely local request counts as local', () => {
+    assert.strictEqual(isLoopback(fakeReq('127.0.0.1')), true);
+    assert.strictEqual(isLoopback(fakeReq('::1')), true);
+  });
+
+  await test('a tunnelled request is NOT local even though it arrives on loopback', () => {
+    // cloudflared connects to us over 127.0.0.1, so without this check every
+    // request on the internet would look local and could claim the panel.
+    assert.strictEqual(isLoopback(fakeReq('127.0.0.1', { 'cf-connecting-ip': '203.0.113.7' })), false);
+    assert.strictEqual(isLoopback(fakeReq('127.0.0.1', { 'x-forwarded-for': '203.0.113.7' })), false);
+    assert.strictEqual(isLoopback(fakeReq('127.0.0.1', { 'cf-ray': 'abc123' })), false);
+    assert.strictEqual(isLoopback(fakeReq('10.0.0.5')), false);
+  });
+
+  await test('an unconfigured panel is claimable only locally or with the code', () => {
+    const auth = new Auth(new Store(path.join(tmp, 'auth.json')));
+    const remote = fakeReq('127.0.0.1', { 'cf-connecting-ip': '203.0.113.7' });
+    assert.strictEqual(auth.mayClaim(remote, undefined), false, 'claimed with no code');
+    assert.strictEqual(auth.mayClaim(remote, 'DEADBEEF'), false, 'claimed with wrong code');
+    assert.strictEqual(auth.mayClaim(remote, auth.setupCode.toLowerCase()), true, 'code should be case-insensitive');
+    assert.strictEqual(auth.mayClaim(fakeReq('127.0.0.1'), undefined), true, 'local claim refused');
+    auth.setPassword('a-real-password');
+    assert.strictEqual(auth.mayClaim(fakeReq('127.0.0.1'), undefined), false, 'still claimable once configured');
   });
 
   console.log('\nsettings store');
