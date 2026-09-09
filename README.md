@@ -239,3 +239,44 @@ docker run --rm -p 7860:7860 -v st-ws:/mnt/workspace -e TUNNEL_ENABLED=false ghc
 - Confirming real-name verification requirements on `modelscope.ai` (§7).
 - A first-run consent screen shown *before* SillyTavern loads, if you want
   opt-in rather than disclosed opt-out.
+
+## 12. Live deployment (verified end to end)
+
+Deployed for real on 2026-09-09 to `tutoihoc/sillytavern`, a free ModelScope
+Docker Studio, building from GitHub, reachable over a Cloudflare quick tunnel.
+
+| Question | Answer |
+|---|---|
+| Can ModelScope's builders reach github.com? | **Yes.** The image clones SillyTavern and this repo during the Studio build, and installs cloudflared from GitHub releases. This was the biggest unknown in section 8; it is resolved. |
+| Does `/mnt/workspace` really persist? | **Yes.** Across a full redeploy the wrapper logged the *same* install id (`2fdc9508-...`) and did not re-seed config - the volume survived. |
+| Does the quick tunnel work from inside a Studio? | **Yes.** cloudflared connects and SillyTavern loads fully over the public trycloudflare URL. |
+| Is 7860 really the only port? | Yes, and the Studio UI hard-codes it: the port field is disabled, labelled "Docker mode port is fixed to 7860". |
+
+### Two things that bit us
+
+**SillyTavern's `hostWhitelist.enabled` cannot be set from an environment
+variable.** In `src/middleware/hostWhitelist.js`:
+
+```js
+const hostWhitelistEnabled = !!getConfigValue('hostWhitelist.enabled', false);        // no converter
+const hostWhitelistScan  = !!getConfigValue('hostWhitelist.scan', false, 'boolean');  // converter
+```
+
+Env values arrive as **strings**, and `!!"false"` is `true`. So setting
+`SILLYTAVERN_HOSTWHITELIST_ENABLED=false` *enables* the whitelist and every
+request gets a 403. Only keys whose call site passes `'boolean'` can be set to
+false from the environment. Leave that key alone, or set it in `config.yaml`.
+
+The wrapper now also presents `Host: 127.0.0.1:<port>` upstream (keeping the
+original in `X-Forwarded-Host`), so SillyTavern sees a loopback client and the
+whitelist is a non-issue regardless of how it is configured.
+
+**Platform log capture starts late.** ModelScope's run log missed the container's
+first few seconds on the initial deploy, swallowing the generated admin password,
+which the wrapper only printed once. It now prints on every boot and again 30s in.
+
+### Studio quotas
+
+A ModelScope account is limited to a small number of Studios (5 on this
+account); creating past it fails with `create too many studios`. Worth knowing
+before telling users "just make a new Studio".
