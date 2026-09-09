@@ -57,18 +57,33 @@ restarts.
 
 ---
 
-## First run is deliberately local-only
+## Claiming a new install
 
-Until you set a panel password, the control panel accepts connections **only
-from the machine it runs on**. That is what makes it safe to start the manager
-on a box that is already reachable from the internet. Set the password, and the
-panel works from anywhere.
+Until a panel password is set, an unconfigured manager will not hand itself to
+whoever finds the URL first. You prove ownership one of two ways:
+
+- **Open it on the machine itself** (`http://localhost:7860/manager`), or
+- **Enter the setup code** printed in the log on every boot until a password
+  exists. On ModelScope that is *Settings -> View log -> Run log*; look for
+  `SETUP CODE:`. A fresh one is issued every restart.
+
+The second path exists because hosts like ModelScope give you no reachable
+localhost — the log is the only channel that proves you are the owner.
+
+A note on why "local" is checked the way it is: behind a Cloudflare tunnel every
+request reaches the manager from `127.0.0.1`, because cloudflared connects over
+loopback. So a request counts as local only when the peer is loopback **and**
+carries no forwarding header (`x-forwarded-for`, `cf-connecting-ip`, `cf-ray`,
+…). Getting this wrong hands the panel to the internet, and it is covered by a
+regression test.
+
+Forgot the password on a headless host? Set `STM_RESET_PASSWORD` to any new
+value and restart. It clears the password once, records the value, and ignores
+the variable on later boots — so it is safe to leave in place.
 
 The panel password is separate from SillyTavern's own login. If you publish the
-tunnel link, turn on basic auth or user accounts under **Config** as well —
-the panel warns you when SillyTavern has no password of its own.
-
----
+tunnel link, turn on basic auth or user accounts under **Config** as well — the
+panel warns you when SillyTavern has no password of its own.
 
 ## Where your data lives
 
@@ -152,6 +167,7 @@ server contract is documented at the top of `src/core/telemetry.js`.
 | `STM_HOME` | Where everything is stored |
 | `CLOUDFLARED_BIN` | Use an existing cloudflared instead of downloading one |
 | `STM_TELEMETRY_ENDPOINT` | Usage reporting endpoint |
+| `STM_RESET_PASSWORD` | Set to a new value to clear the panel password once on next start |
 
 ```
 stm                 start the manager
