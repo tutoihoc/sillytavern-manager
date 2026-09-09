@@ -3,6 +3,7 @@
  * Composition root: builds every subsystem, wires them together and owns the
  * lifecycle. Everything the API layer needs hangs off the returned object.
  */
+const fs = require('fs');
 const path = require('path');
 const platform = require('./core/platform');
 const { Store } = require('./core/store');
@@ -111,7 +112,13 @@ async function createApp({ port = Number(process.env.PORT) || 7860 } = {}) {
       if (app.installed()) {
         const layout = ST.detectLayout(platform.stRoot);
         if (layout) store.set('sillytavern.layout', layout);
+        const marker = ST.readMarker(platform.stRoot);
+        if (marker && marker.version) store.set('sillytavern.installedVersion', marker.version);
         if (store.get('sillytavern.autoStart', true)) supervisor.start();
+      } else if (fs.existsSync(path.join(platform.stRoot, 'node_modules'))) {
+        // A checkout with dependencies but no completion marker means the last
+        // install was interrupted. Starting it would only crash-loop.
+        log.warn('A previous SillyTavern install did not finish. Re-run it from the control panel.');
       } else {
         log.info('SillyTavern is not installed yet - open the control panel to set it up');
       }

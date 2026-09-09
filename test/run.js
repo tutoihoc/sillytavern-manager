@@ -191,6 +191,20 @@ async function test(name, fn) {
     assert.ok(signed.headers.authorization.startsWith('AWS4-HMAC-SHA256 Credential=AK/20260909/auto/s3/'));
   });
 
+  await test('an install is only complete once the marker is written', async () => {
+    const root = path.join(tmp, 'stroot');
+    await fsp.mkdir(path.join(root, 'node_modules'), { recursive: true });
+    await fsp.writeFile(path.join(root, 'server.js'), '// pretend');
+    // This is exactly the mid-npm-install state that crash-looped in production:
+    // server.js present, node_modules created, dependencies not yet written.
+    assert.strictEqual(ST.isInstalled(root), false, 'half-finished install looked complete');
+    await ST.writeMarker(root, { version: '1.18.0' });
+    assert.strictEqual(ST.isInstalled(root), true);
+    assert.strictEqual(ST.readMarker(root).version, '1.18.0');
+    ST.clearMarker(root);
+    assert.strictEqual(ST.isInstalled(root), false, 'marker removal should invalidate');
+  });
+
   console.log('\nfirst-run ownership');
 
   const fakeReq = (addr, headers = {}) => ({ socket: { remoteAddress: addr }, headers });

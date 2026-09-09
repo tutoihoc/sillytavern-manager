@@ -112,12 +112,25 @@ function npmCommand() {
 
 /** Run npm install inside the checkout, streaming its output to the log. */
 function npmInstall(cwd, log, onProgress) {
+  const cacheDir = path.join(os.tmpdir(), 'stm-npm-cache');
+  try { fs.mkdirSync(cacheDir, { recursive: true }); } catch { /* fall back to the default */ }
+
   return new Promise((resolve, reject) => {
     log.info('Installing SillyTavern dependencies (npm install)...');
-    const child = spawn(npmCommand(), ['install', '--omit=dev', '--no-audit', '--no-fund'], {
+    log.info('On a slow disk this can take several minutes; SillyTavern will not start until it finishes.');
+    const args = ['install', '--omit=dev', '--no-audit', '--no-fund', '--prefer-offline', '--loglevel=info'];
+    const child = spawn(npmCommand(), args, {
       cwd,
       shell: process.platform === 'win32',
-      env: { ...process.env, npm_config_update_notifier: 'false' },
+      env: {
+        ...process.env,
+        npm_config_update_notifier: 'false',
+        // Keep npm's cache and scratch space off the persistent volume: on
+        // ModelScope that volume is network-backed, and npm writes tens of
+        // thousands of small files. Local disk turns an hour into minutes.
+        npm_config_cache: cacheDir,
+        TMPDIR: cacheDir,
+      },
     });
     child.stdout.on('data', (d) => {
       log.info(String(d).trimEnd());
@@ -146,6 +159,9 @@ async function install({ selection, paths, log, onProgress = () => {} }) {
   const target = await resolveDownload(selection);
   log.info(`Selected SillyTavern ${target.version} (${target.kind})`);
   onProgress({ phase: 'resolve', version: target.version, percent: 2 });
+
+  // From here on the checkout is not trustworthy until the marker is rewritten.
+  ST.clearMarker(paths.stRoot);
 
   const stage = path.join(paths.tmpDir, `st-${Date.now()}`);
   const zipFile = path.join(paths.tmpDir, `st-${Date.now()}.zip`);
@@ -207,6 +223,7 @@ async function install({ selection, paths, log, onProgress = () => {} }) {
 
     const layout = ST.detectLayout(paths.stRoot);
     const version = (await ST.installedVersion(paths.stRoot)) || target.version;
+    await ST.writeMarker(paths.stRoot, { version, requested: target.version, kind: target.kind, layout });
     log.info(`SillyTavern ${version} installed (${layout} layout) at ${paths.stRoot}`);
     onProgress({ phase: 'done', percent: 100, version, layout });
 

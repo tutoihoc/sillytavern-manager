@@ -263,7 +263,12 @@ function createApi({ app, auth }) {
     // ---- SillyTavern process ---------------------------------------------
 
     if (route === '/sillytavern/start' && method === 'POST') {
-      if (!app.installed()) return json(res, 400, { error: 'SillyTavern is not installed yet' });
+      if (jobs.all().some((j) => j.kind === 'install' && j.state === 'running')) {
+        return json(res, 409, { error: 'An installation is still running. SillyTavern will start on its own when it finishes.' });
+      }
+      if (!app.installed()) {
+        return json(res, 400, { error: 'SillyTavern is not installed yet, or the last install did not finish' });
+      }
       return json(res, 200, supervisor.start());
     }
     if (route === '/sillytavern/stop' && method === 'POST') {

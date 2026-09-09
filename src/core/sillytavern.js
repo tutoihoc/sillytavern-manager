@@ -125,9 +125,44 @@ async function installedVersion(stRoot) {
   }
 }
 
+/**
+ * Marker written only after `npm install` has actually finished.
+ *
+ * Testing for node_modules/ is not enough and caused a real crash loop: npm
+ * creates that directory within seconds and then spends minutes filling it, so
+ * an install still in progress looked complete, SillyTavern was launched
+ * against half-written dependencies, and it exited 1 over and over - competing
+ * for CPU and disk with the very install it was waiting on.
+ */
+const MARKER = '.sillytavern-manager-install.json';
+
+function markerPath(stRoot) {
+  return path.join(stRoot, MARKER);
+}
+
+async function writeMarker(stRoot, info) {
+  await fsp.writeFile(markerPath(stRoot), JSON.stringify({
+    completedAt: new Date().toISOString(),
+    ...info,
+  }, null, 2));
+}
+
+function readMarker(stRoot) {
+  try {
+    return JSON.parse(fs.readFileSync(markerPath(stRoot), 'utf8'));
+  } catch {
+    return null;
+  }
+}
+
+function clearMarker(stRoot) {
+  try { fs.unlinkSync(markerPath(stRoot)); } catch { /* not there */ }
+}
+
 function isInstalled(stRoot) {
   return fs.existsSync(path.join(stRoot, 'server.js'))
-    && fs.existsSync(path.join(stRoot, 'node_modules'));
+    && fs.existsSync(path.join(stRoot, 'node_modules'))
+    && !!readMarker(stRoot);
 }
 
 /**
@@ -183,6 +218,10 @@ module.exports = {
   listUsers,
   installedVersion,
   isInstalled,
+  writeMarker,
+  readMarker,
+  clearMarker,
+  markerPath,
   measure,
   looksLikeUserBackup,
 };
