@@ -1,0 +1,37 @@
+# Default SillyTavern config, copied to /mnt/workspace/sillytavern/config on
+# FIRST BOOT ONLY. After that this file is never touched again - edit the copy
+# on the persistent volume (or through the SillyTavern UI) instead.
+#
+# The wrapper terminates the public edge on :7860, so SillyTavern itself only
+# ever listens on loopback and only ever sees 127.0.0.1 as the client address.
+# That is why whitelistMode is off here: it would otherwise reject nothing and
+# protect nothing. Real access control is userAccounts below.
+
+listen: true
+port: 8000
+listenAddress:
+  ipv4: 127.0.0.1
+protocol:
+  ipv4: true
+  ipv6: false
+
+# The wrapper is the only client. IP filtering at this layer is meaningless.
+whitelistMode: false
+securityOverride: true
+
+# THIS is your front door. The tunnel URL is public, guessable by anyone who
+# sees it, and indexed by nobody - but it is still the open internet.
+# Create your account on first visit and pick a real password.
+basicAuthMode: false
+enableUserAccounts: true
+enableDiscreetLogin: true
+
+# Server plugins are off by default. Turn on only if you install one you trust:
+# a server plugin runs arbitrary code inside this container.
+enableServerPlugins: false
+
+# Sensible defaults for a shared/remote instance.
+autorun: false
+disableThumbnails: false
+allowKeysExposure: false
+skipContentCheck: false
