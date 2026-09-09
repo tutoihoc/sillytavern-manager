@@ -74,7 +74,7 @@ function readBodyForMetering(req, cap = 64 * 1024 * 1024) {
 
 async function start({ port = Number(process.env.PORT) || 7860, host = '0.0.0.0' } = {}) {
   const app = await createApp({ port });
-  const auth = new Auth(app.store);
+  const auth = new Auth(app.store, app.log);
   const api = createApi({ app, auth });
 
   const proxy = createProxy({
@@ -183,9 +183,7 @@ async function start({ port = Number(process.env.PORT) || 7860, host = '0.0.0.0'
   });
 
   app.log.info(`Control panel: http://localhost:${port}${PANEL}`);
-  if (!auth.configured) {
-    app.log.info('First run: open the control panel ON THIS MACHINE to choose a password.');
-  }
+  auth.announceSetup();
 
   await app.begin();
 

@@ -3,9 +3,17 @@
  * Login for the control panel.
  *
  * The panel can sit on a public trycloudflare URL, so it gets its own password
- * independent of SillyTavern's. On first run there is no password: the setup
- * flow asks the user to choose one, and until then the panel is reachable only
- * from loopback so an unconfigured install cannot be hijacked from the internet.
+ * independent of SillyTavern's. On first run there is no password yet, and an
+ * unconfigured panel must not be claimable by whoever finds the URL first.
+ *
+ * Two ways to prove you are the owner:
+ *   - you are connecting from the machine itself (loopback), or
+ *   - you can read its logs, where a one-time setup code is printed on every
+ *     boot until a password exists.
+ *
+ * The second path exists because of hosts like ModelScope, where the container
+ * has no reachable localhost for the user but the runtime log is right there in
+ * the dashboard. Without it, a cloud deployment could never finish setup.
  */
 const crypto = require('crypto');
 
@@ -30,13 +38,40 @@ function isLoopback(req) {
 }
 
 class Auth {
-  constructor(store) {
+  constructor(store, log = null) {
     this.store = store;
+    this.log = log;
     this.sessions = new Map();   // token -> expiry
+    // Regenerated every start: a code from a previous boot is worthless.
+    this.setupCode = crypto.randomBytes(4).toString('hex').toUpperCase();
+  }
+
+  /** Shout the setup code until a password is set. */
+  announceSetup() {
+    if (this.configured || !this.log) return;
+    const bar = '='.repeat(58);
+    this.log.info(bar);
+    this.log.info(`SETUP CODE: ${this.setupCode}`);
+    this.log.info('Enter this in the control panel to choose your password.');
+    this.log.info('(Not needed if you open the panel on this machine itself.)');
+    this.log.info(bar);
   }
 
   get configured() {
     return !!this.store.get('adminPasswordHash');
+  }
+
+  /**
+   * Is this request allowed to claim an unconfigured panel?
+   * Loopback, or the right setup code.
+   */
+  mayClaim(req, setupCode) {
+    if (this.configured) return false;
+    if (isLoopback(req)) return true;
+    const given = String(setupCode || '').trim().toUpperCase();
+    const expect = this.setupCode;
+    if (given.length !== expect.length) return false;
+    return crypto.timingSafeEqual(Buffer.from(given), Buffer.from(expect));
   }
 
   setPassword(password) {
@@ -91,7 +126,7 @@ class Auth {
     if (!this.configured) {
       return isLoopback(req)
         ? { ok: true, reason: 'first-run-loopback' }
-        : { ok: false, reason: 'setup-required-loopback-only' };
+        : { ok: false, reason: 'setup-code-required' };
     }
     const token = this.tokenFrom(req);
     if (!token) return { ok: false, reason: 'no-session' };

@@ -114,28 +114,30 @@ function viewTerms(boot) {
 
 function viewPassword(boot) {
   const first = boot.needsPassword;
-  const blocked = first && boot.authReason === 'setup-required-loopback-only';
+  const needsCode = boot.needsSetupCode;
   return `
   <div class="gate"><div class="gate-card">
     <div class="brand"><div class="brand-mark">ST</div>
       <div class="brand-text"><b>SillyTavern Manager</b><span>v${esc(boot.version)}</span></div></div>
-    ${blocked ? `
-      <div class="notice warn"><b>Finish setup on the machine itself.</b><br>
-      No panel password has been set yet, so remote access is blocked. Open
-      <code>http://localhost:${location.port || 7860}/manager</code> on the computer or phone
-      running the manager, choose a password, and this page will work from anywhere.</div>
-    ` : `
-      <h2>${first ? 'Choose a panel password' : 'Sign in'}</h2>
-      <p style="color:var(--ink-dim);font-size:13px;margin:8px 0 16px">
-        ${first
-          ? 'This protects the control panel. It is separate from any SillyTavern login.'
-          : 'Enter the control panel password.'}</p>
-      <label class="field"><span class="name">Password</span>
-        <input type="password" id="pw" autocomplete="${first ? 'new-password' : 'current-password'}" autofocus></label>
-      ${first ? '<label class="field"><span class="name">Confirm password</span><input type="password" id="pw2" autocomplete="new-password"></label>' : ''}
-      <button class="primary" id="doLogin" style="width:100%;justify-content:center">${first ? 'Set password' : 'Sign in'}</button>
-      <p id="loginErr" style="color:var(--bad);font-size:12.5px;margin:10px 0 0;min-height:1em"></p>
-    `}
+    <h2>${first ? 'Claim this manager' : 'Sign in'}</h2>
+    <p style="color:var(--ink-dim);font-size:13px;margin:8px 0 16px">
+      ${first
+        ? (needsCode
+          ? 'Nobody has set a password yet. Prove this is yours with the setup code printed in the server log, then choose a password.'
+          : 'Choose a password for the control panel. It is separate from any SillyTavern login.')
+        : 'Enter the control panel password.'}</p>
+
+    ${needsCode ? `<label class="field"><span class="name">Setup code</span>
+      <input id="code" placeholder="e.g. 3F9A2C71" autocomplete="off" spellcheck="false"
+             style="font-family:var(--mono);letter-spacing:.12em;text-transform:uppercase">
+      <span class="help">Look for <code>SETUP CODE:</code> in the log. On ModelScope that is
+      Settings &rarr; View log &rarr; Run log. A new one is issued every restart.</span></label>` : ''}
+
+    <label class="field"><span class="name">${first ? 'New password' : 'Password'}</span>
+      <input type="password" id="pw" autocomplete="${first ? 'new-password' : 'current-password'}" autofocus></label>
+    ${first ? '<label class="field"><span class="name">Confirm password</span><input type="password" id="pw2" autocomplete="new-password"></label>' : ''}
+    <button class="primary" id="doLogin" style="width:100%;justify-content:center">${first ? 'Set password' : 'Sign in'}</button>
+    <p id="loginErr" style="color:var(--bad);font-size:12.5px;margin:10px 0 0;min-height:1em"></p>
   </div></div>`;
 }
 
@@ -664,7 +666,8 @@ function wireLogin() {
     if (pw2 && pw !== pw2.value) { $('#loginErr').textContent = 'The two passwords do not match.'; return; }
     btn.disabled = true;
     try {
-      await api('/session', { method: 'POST', body: { password: pw } });
+      const code = $('#code');
+      await api('/session', { method: 'POST', body: { password: pw, setupCode: code ? code.value : undefined } });
       await boot();
     } catch (err) {
       $('#loginErr').textContent = err.message;

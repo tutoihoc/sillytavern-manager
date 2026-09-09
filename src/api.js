@@ -117,6 +117,7 @@ function createApi({ app, auth }) {
         installed: app.installed(),
         authenticated: check.ok,
         authReason: check.reason || null,
+        needsSetupCode: !auth.configured && !check.ok,
         platform: { kind: platform.kind, label: platform.label },
         terms: TERMS,
       });
@@ -133,10 +134,15 @@ function createApi({ app, auth }) {
     if (route === '/session' && method === 'POST') {
       const body = await readJson(req);
 
-      // First run: choose the password (only possible from loopback).
+      // First run: claim the panel, from loopback or with the setup code.
       if (!auth.configured) {
-        const check = auth.check(req);
-        if (!check.ok) return json(res, 403, { error: 'Set the password from the machine itself first' });
+        if (!auth.mayClaim(req, body.setupCode)) {
+          await new Promise((r) => setTimeout(r, 600));
+          return json(res, 403, {
+            error: 'Wrong setup code. It is printed in the server log every time this starts.',
+            reason: 'setup-code-required',
+          });
+        }
         try {
           auth.setPassword(body.password);
         } catch (err) {
