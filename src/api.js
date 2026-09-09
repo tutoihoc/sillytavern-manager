@@ -63,6 +63,19 @@ function streamToFile(req, destFile, onProgress) {
   });
 }
 
+/** Append a request body to a file, truncating first when it is the first chunk. */
+function appendToFile(req, destFile, truncate) {
+  return new Promise((resolve, reject) => {
+    const out = fs.createWriteStream(destFile, { flags: truncate ? 'w' : 'a' });
+    let received = 0;
+    req.on('data', (c) => { received += c.length; });
+    req.on('error', reject);
+    out.on('error', reject);
+    out.on('close', () => resolve(received));
+    req.pipe(out);
+  });
+}
+
 /** Simple in-memory job registry so the UI can follow long operations. */
 class Jobs {
   constructor() { this.map = new Map(); }
@@ -409,6 +422,66 @@ function createApi({ app, auth }) {
       }
     }
 
+    /*
+     * Chunked upload.
+     *
+     * A single POST cannot carry a real backup: a Cloudflare quick tunnel
+     * rejects request bodies at roughly half a gigabyte with 413, and because
+     * it decides from Content-Length before the body finishes, the browser
+     * only ever sees the connection reset. Measured: 500 MiB accepted,
+     * 512 MiB refused. A 2.36 GB export never had a chance.
+     *
+     * So the browser slices the file and sends it a piece at a time; the
+     * server appends them in order and assembles at the end.
+     */
+    if (route === '/backups/upload-chunk' && method === 'POST') {
+      const id = url.searchParams.get('uploadId') || '';
+      const index = Number(url.searchParams.get('index'));
+      if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: 'invalid uploadId' });
+      if (!Number.isInteger(index) || index < 0) return json(res, 400, { error: 'invalid chunk index' });
+
+      const partFile = path.join(platform.tmpDir, `upload-${id}.part`);
+      try {
+        await fsp.mkdir(platform.tmpDir, { recursive: true });
+        const written = await appendToFile(req, partFile, index === 0);
+        const total = (await fsp.stat(partFile)).size;
+        return json(res, 200, { ok: true, index, written, total });
+      } catch (err) {
+        log.error(`Upload chunk ${index} failed: ${err.message}`);
+        await fsp.rm(partFile, { force: true }).catch(() => {});
+        return json(res, 500, { error: err.message });
+      }
+    }
+
+    if (route === '/backups/upload-finish' && method === 'POST') {
+      const body = await readJson(req);
+      const id = String(body.uploadId || '');
+      if (!/^[\w-]{8,64}$/.test(id)) return json(res, 400, { error: 'invalid uploadId' });
+      const partFile = path.join(platform.tmpDir, `upload-${id}.part`);
+      const name = String(body.name || 'uploaded.zip').replace(/[^\w.@+-]/g, '_');
+      const dest = path.join(platform.backupDir, `imported-${Date.now()}-${name}`);
+
+      try {
+        await fsp.mkdir(platform.backupDir, { recursive: true });
+        const st = await fsp.stat(partFile);
+        if (body.expectedBytes && Number(body.expectedBytes) !== st.size) {
+          throw new Error(`incomplete upload: got ${st.size} bytes, expected ${body.expectedBytes}`);
+        }
+        await fsp.rename(partFile, dest).catch(async () => {
+          await fsp.copyFile(partFile, dest);
+          await fsp.rm(partFile, { force: true });
+        });
+        const info = await backup.inspect(dest);
+        log.info(`Imported ${name} (${(st.size / 1e6).toFixed(1)} MB, ${info.entries} entries)`);
+        return json(res, 200, { ok: true, file: path.basename(dest), bytes: st.size, info });
+      } catch (err) {
+        log.error(`Upload assembly failed: ${err.message}`);
+        await fsp.rm(partFile, { force: true }).catch(() => {});
+        await fsp.rm(dest, { force: true }).catch(() => {});
+        return json(res, 400, { error: err.message });
+      }
+    }
+
     if (route === '/backups/upload' && method === 'POST') {
       // The whole request body is the zip. Streamed to disk.
       const name = (url.searchParams.get('name') || 'uploaded.zip').replace(/[^\w.@+-]/g, '_');
@@ -419,6 +492,7 @@ function createApi({ app, auth }) {
         const info = await backup.inspect(dest);
         return json(res, 200, { ok: true, file: path.basename(dest), bytes, info });
       } catch (err) {
+        log.error(`Upload failed: ${err.message}`);
         await fsp.rm(dest, { force: true }).catch(() => {});
         return json(res, 400, { error: err.message });
       }

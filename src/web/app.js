@@ -932,11 +932,13 @@ function wireBackups() {
   $('#bkFile').onchange = async (e) => {
     const f = e.target.files[0];
     if (!f) return;
-    toast(`Uploading ${f.name} (${fmtBytes(f.size)})…`);
+    e.target.value = '';                       // allow re-picking the same file
     try {
-      const r = await api(`/backups/upload?name=${encodeURIComponent(f.name)}`, { method: 'POST', body: f, raw: true });
+      const r = await uploadInChunks(f);
       confirmRestore(r.file, 'local', r.info);
-    } catch (err) { toast(err.message, 'bad'); }
+    } catch (err) {
+      toast(`Upload failed: ${err.message}`, 'bad');
+    }
   };
 
   document.querySelectorAll('[data-restore]').forEach((btn) => {
@@ -956,6 +958,63 @@ function wireBackups() {
       await loadBackups(); render();
     };
   });
+}
+
+/*
+ * Send a file a piece at a time.
+ *
+ * One big POST does not survive the trip: a Cloudflare quick tunnel refuses
+ * bodies at around half a gigabyte, and since it decides from Content-Length
+ * before the upload finishes, the browser reports ERR_CONNECTION_RESET rather
+ * than the 413 that was actually sent. 32 MB pieces stay far below any such
+ * limit, and give us a real progress bar for free.
+ */
+const CHUNK_BYTES = 32 * 1024 * 1024;
+
+async function uploadInChunks(file) {
+  const id = (crypto.randomUUID ? crypto.randomUUID() : String(Date.now()) + Math.random().toString(36).slice(2)).replace(/[^\w-]/g, '');
+  const chunks = Math.max(1, Math.ceil(file.size / CHUNK_BYTES));
+
+  const host = $('#bkJob') || $('#view');
+  const strip = el(`<div class="card" style="margin-bottom:14px">
+    <header><h2>Uploading ${esc(file.name)}</h2><div class="spacer"></div>
+      <span class="eyebrow" id="upPct">0%</span></header>
+    <div class="bar"><i style="width:0%"></i></div>
+    <p class="mono" style="font-size:12px;color:var(--muted);margin:9px 0 0" id="upNote">
+      ${fmtBytes(file.size)} in ${chunks} piece${chunks > 1 ? 's' : ''}</p></div>`);
+  host.prepend(strip);
+
+  try {
+    for (let i = 0; i < chunks; i++) {
+      const slice = file.slice(i * CHUNK_BYTES, Math.min(file.size, (i + 1) * CHUNK_BYTES));
+      const res = await fetch(
+        `${API}/backups/upload-chunk?uploadId=${id}&index=${i}`,
+        { method: 'POST', body: slice, credentials: 'same-origin' },
+      ).catch((err) => {
+        throw new Error(`network error on piece ${i + 1} of ${chunks} (${err.message})`);
+      });
+      if (!res.ok) {
+        const msg = res.status === 413
+          ? 'the connection in front of this server rejected the piece as too large'
+          : ((await res.json().catch(() => ({}))).error || `HTTP ${res.status}`);
+        throw new Error(msg);
+      }
+      const pct = Math.round(((i + 1) / chunks) * 100);
+      $('.bar > i', strip).style.width = `${pct}%`;
+      $('#upPct', strip).textContent = `${pct}%`;
+      $('#upNote', strip).textContent =
+        `${fmtBytes(Math.min(file.size, (i + 1) * CHUNK_BYTES))} of ${fmtBytes(file.size)}`;
+    }
+
+    $('#upNote', strip).textContent = 'Checking the archive...';
+    const done = await api('/backups/upload-finish', {
+      method: 'POST',
+      body: { uploadId: id, name: file.name, expectedBytes: file.size },
+    });
+    return done;
+  } finally {
+    strip.remove();
+  }
 }
 
 async function saveBackupSettings(patch, notify) {
