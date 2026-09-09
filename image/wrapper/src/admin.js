@@ -46,15 +46,22 @@ function createAdmin(ctx) {
     if (!p) {
       p = crypto.randomBytes(9).toString('base64url');
       state.set('adminPassword', p);
-      const bar = '='.repeat(60);
-      log.info(bar);
-      log.info('ADMIN PASSWORD (first boot): ' + p);
-      log.info('Set ADMIN_PASSWORD in the Studio env vars to pin your own.');
-      log.info(bar);
     }
     return p;
   }
-  password(); // generate at startup so it always lands in the logs
+
+  // Print on EVERY boot, not just the first. Platform log capture often starts
+  // a few seconds late and swallows the opening lines, and a generated password
+  // that was only ever printed once is a password you have lost.
+  function announcePassword() {
+    const bar = '='.repeat(60);
+    log.info(bar);
+    log.info('ADMIN PASSWORD: ' + password());
+    log.info('Set ADMIN_PASSWORD in the Studio env vars to pin your own.');
+    log.info(bar);
+  }
+  announcePassword();
+  setTimeout(announcePassword, 30_000).unref?.(); // again, once logs are attached
 
   function authed(req) {
     const cookie = req.headers.cookie || '';

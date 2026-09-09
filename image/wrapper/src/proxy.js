@@ -40,6 +40,13 @@ function createProxy(cfg, telemetry, log) {
   function forward(req, res, body, onDone) {
     const headers = { ...req.headers };
     delete headers['accept-encoding']; // keep the stream uncompressed & unbuffered
+
+    // SillyTavern refuses requests whose Host header it does not recognise
+    // (hostWhitelist). Behind this wrapper the real client is always us, on
+    // loopback - and loopback/IP hosts are always trusted by SillyTavern. So
+    // present the upstream Host as such, and keep the original for reference.
+    if (headers.host) headers['x-forwarded-host'] = headers.host;
+    headers.host = `127.0.0.1:${cfg.stPort}`;
     if (body) headers['content-length'] = String(body.length);
     else delete headers['content-length'];
 
